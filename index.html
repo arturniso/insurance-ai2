@@ -59,15 +59,15 @@
 
       <div class="stack">
         <div class="wideBtns">
-          <button id="trainBtn" class="btn" disabled>Train model</button>
+          <button id="trainBtn" type="button" class="btn" disabled>Train model</button>
         </div>
         <div class="gridBtns">
-          <button id="predictBtn" class="btn secondary" disabled>Predict on test.csv</button>
-          <button id="downloadBtn" class="btn ghost" disabled>Download predictions.csv</button>
+          <button id="predictBtn" type="button" class="btn secondary" disabled>Predict on test.csv</button>
+          <button id="downloadBtn" type="button" class="btn ghost" disabled>Download predictions.csv</button>
         </div>
         <div class="wideBtns">
-          <button id="manualBtn" class="btn secondary" disabled>Manual calculator</button>
-          <button id="resetBtn" class="btn ghost">Reset</button>
+          <button id="manualBtn" type="button" class="btn secondary" disabled>Manual calculator</button>
+          <button id="resetBtn" type="button" class="btn ghost">Reset</button>
         </div>
       </div>
 
@@ -83,8 +83,8 @@
       <div id="formBox" class="row"></div>
       <div id="calcOut" class="value" style="font-size:22px">—</div>
       <div class="actions">
-        <button id="calcBtn" class="btn">Calculate</button>
-        <button id="closeBtn" class="btn secondary">Close</button>
+        <button id="calcBtn" type="button" class="btn">Calculate</button>
+        <button id="closeBtn" type="button" class="btn secondary">Close</button>
       </div>
     </div>
   </div>
@@ -104,6 +104,7 @@ let trainRows=[], testRows=[]; let columns=[], target='charges';
 let catCols=[], numCols=[], enc={}; let model=null; let preds=null;
 
 const $=id=>document.getElementById(id);
+function safe(fn){try{return fn()}catch(e){console.error(e); setStatus('error: '+(e?.message||e));}}
 
 // ===== Upload helpers (train & test) =====
 function wireDrop(zone, input, onFiles){
@@ -165,50 +166,57 @@ function rowToX(r){
 }
 
 $("trainBtn").onclick = async ()=>{
-  if(!trainRows.length) return; setStatus('training…');
-  fitEnc();
-  const X=tf.tensor2d(trainRows.map(rowToX));
-  const y=tf.tensor2d(trainRows.map(r=>[Number(r[target])]))
-  model=tf.sequential({layers:[
-    tf.layers.dense({units:128,activation:'relu',inputShape:[X.shape[1]]}),
-    tf.layers.dropout({rate:0.15}),
-    tf.layers.dense({units:64,activation:'relu'}),
-    tf.layers.dense({units:1})
-  ]});
-  model.compile({optimizer:tf.train.adam(0.001),loss:'meanSquaredError'});
-  await model.fit(X,y,{epochs:20,batchSize:Math.min(256,Math.max(32,Math.floor(X.shape[0]/20)||64)),shuffle:true});
-  setStatus('model ready');
-  $("predictBtn").disabled = !testRows.length;
+  safe(async ()=>{
+    if(!trainRows.length) return; setStatus('training…');
+    if(typeof tf==='undefined'){ setStatus('TensorFlow.js failed to load'); return; }
+    fitEnc();
+    const X=tf.tensor2d(trainRows.map(rowToX));
+    const y=tf.tensor2d(trainRows.map(r=>[Number(r[target])]));
+    model=tf.sequential({layers:[
+      tf.layers.dense({units:128,activation:'relu',inputShape:[X.shape[1]]}),
+      tf.layers.dropout({rate:0.15}),
+      tf.layers.dense({units:64,activation:'relu'}),
+      tf.layers.dense({units:1})
+    ]});
+    model.compile({optimizer:tf.train.adam(0.001),loss:'meanSquaredError'});
+    await model.fit(X,y,{epochs:20,batchSize:Math.min(256,Math.max(32,Math.floor(X.shape[0]/20)||64)),shuffle:true});
+    setStatus('model ready');
+    $("predictBtn").disabled = !testRows.length;
+  });
 };
 
 $("predictBtn").onclick = ()=>{
-  if(!model||!testRows.length) return;
-  const X=tf.tensor2d(testRows.map(rowToX));
-  const yhat=model.predict(X);
-  yhat.data().then(arr=>{
-    preds=testRows.map((r,i)=>({...r,prediction:Number(arr[i].toFixed(4))}));
-    const n=arr.length; const val = n===1? arr[0] : (arr.reduce((a,b)=>a+b,0)/n);
-    setValue(Number(val).toFixed(2));
-    $("downloadBtn").disabled = false;
+  safe(()=>{
+    if(!model||!testRows.length) return;
+    const X=tf.tensor2d(testRows.map(rowToX));
+    const yhat=model.predict(X);
+    yhat.data().then(arr=>{
+      preds=testRows.map((r,i)=>({...r,prediction:Number(arr[i].toFixed(4))}));
+      const n=arr.length; const val = n===1? arr[0] : (arr.reduce((a,b)=>a+b,0)/n);
+      setValue(Number(val).toFixed(2));
+      $("downloadBtn").disabled = false;
+    });
   });
 };
 
 $("downloadBtn").onclick = ()=>{
-  if(!preds||!preds.length) return;
-  const header=Object.keys(preds[0]);
-  const csv=[header.join(','), ...preds.map(r=> header.map(h=> JSON.stringify(r[h]??'')).join(','))].join('
+  safe(()=>{
+    if(!preds||!preds.length) return;
+    const header=Object.keys(preds[0]);
+    const csv=[header.join(','), ...preds.map(r=> header.map(h=> JSON.stringify(r[h]??'')).join(','))].join('
 ');
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='predictions.csv'; a.click(); URL.revokeObjectURL(url);
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='predictions.csv'; a.click(); URL.revokeObjectURL(url);
+  });
 };
 
-$("resetBtn").onclick = ()=>{ location.reload(); };
+$("resetBtn").onclick = ()=>{ safe(()=> location.reload()); };
 
 // ===== Manual calculator (modal) =====
 const modal=$("modal"), formBox=$("formBox"), calcOut=$("calcOut");
-$("manualBtn").onclick=()=>{ if(!columns.length){return;} buildForm(); modal.style.display='flex'; };
-$("closeBtn").onclick=()=>{ modal.style.display='none'; };
-$("calcBtn").onclick=()=>{ if(!model) return; const r=readForm(); const x=tf.tensor2d([rowToX(r)]); model.predict(x).data().then(a=>{ calcOut.textContent = a[0].toFixed(2); }); };
+$("manualBtn").onclick=()=>{ safe(()=>{ if(!columns.length){return;} buildForm(); modal.style.display='flex'; }); };
+$("closeBtn").onclick=()=>{ safe(()=>{ modal.style.display='none'; }); };
+$("calcBtn").onclick=()=>{ safe(()=>{ if(!model) return; const r=readForm(); const x=tf.tensor2d([rowToX(r)]); model.predict(x).data().then(a=>{ calcOut.textContent = a[0].toFixed(2); }); }); };
 
 function buildForm(){
   formBox.innerHTML='';
