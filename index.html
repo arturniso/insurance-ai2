@@ -16,13 +16,13 @@
     .link{font-size:12px;color:#bcd0ff;text-decoration:none;border:1px solid #30456f;padding:6px 10px;border-radius:10px}
     .panel{width:100%;background:linear-gradient(180deg,#0f1830,#0b142b);border:1px solid var(--line);border-radius:18px;padding:20px;display:grid;gap:16px;justify-items:center;box-shadow:0 20px 45px rgba(0,0,0,.35)}
     .stack{display:grid;gap:10px;width:100%;max-width:540px}
-    .btn{background:var(--accent);border:none;padding:12px 16px;border-radius:12px;color:#0b1220;font-weight:800;cursor:pointer}
+    .btn{background:var(--accent);border:none;padding:12px 16px;border-radius:12px;color:#0b1220;font-weight:800;cursor:pointer;display:inline-block;text-align:center}
     .btn.secondary{background:#12224f;color:var(--text);border:1px solid #30456f}
     .btn.ghost{background:transparent;color:var(--text);border:1px dashed #30456f}
     .label{font-size:12px;color:var(--muted);margin-top:-6px;margin-bottom:4px}
     .drop{width:100%;border:2px dashed #36508a;border-radius:14px;padding:18px;display:grid;place-items:center;background:#0b1430}
     .drop.dragover{background:#0d1840}
-    input[type=file]{display:none}
+    input[type=file]{position:absolute;left:-9999px;opacity:0}
     .gridBtns{display:grid;gap:10px;width:100%;grid-template-columns:1fr 1fr}
     .gridBtns>button{width:100%}
     .wideBtns{display:grid;gap:10px;width:100%;grid-template-columns:1fr}
@@ -47,13 +47,13 @@
       <div class="stack">
         <div class="label">train.csv — required</div>
         <div id="dropTrain" class="drop">
-          <button id="pickTrain" class="btn">Upload train.csv</button>
-          <input id="trainInput" type="file" accept=".csv" />
+          <label for="trainInput" class="btn">Upload train.csv</label>
+          <input id="trainInput" type="file" accept=".csv,text/csv" />
         </div>
         <div class="label">test.csv — optional</div>
         <div id="dropTest" class="drop">
-          <button id="pickTest" class="btn secondary">Upload test.csv</button>
-          <input id="testInput" type="file" accept=".csv" />
+          <label for="testInput" class="btn secondary">Upload test.csv</label>
+          <input id="testInput" type="file" accept=".csv,text/csv" />
         </div>
       </div>
 
@@ -105,24 +105,22 @@ let catCols=[], numCols=[], enc={}; let model=null; let preds=null;
 
 const $=id=>document.getElementById(id);
 
-// ===== Upload helpers (separate TRAIN and TEST) =====
+// ===== Upload helpers (train & test) =====
 function wireDrop(zone, input, onFiles){
   ['dragenter','dragover'].forEach(evt=> zone.addEventListener(evt, e=>{e.preventDefault();zone.classList.add('dragover');}));
   ;['dragleave','drop'].forEach(evt=> zone.addEventListener(evt, e=>{e.preventDefault();zone.classList.remove('dragover');}));
   zone.addEventListener('drop', e=> onFiles([...e.dataTransfer.files]));
   input.addEventListener('change', e=> onFiles([...e.target.files]));
+  // Fallback: click anywhere in the drop zone opens chooser
+  zone.addEventListener('click', ()=> input.click());
 }
 
 wireDrop($("dropTrain"), $("trainInput"), files=>{
-  const f = files.find(x=>/train\.csv$/i.test(x.name)) || files[0];
-  if(!f) return; parseCSV(f,true);
+  const f = files[0]; if(!f) return; parseCSV(f,true);
 });
 wireDrop($("dropTest"), $("testInput"), files=>{
-  const f = files.find(x=>/test\.csv$/i.test(x.name)) || files[0];
-  if(!f) return; parseCSV(f,false);
+  const f = files[0]; if(!f) return; parseCSV(f,false);
 });
-$("pickTrain").onclick=()=> $("trainInput").click();
-$("pickTest").onclick =()=> $("testInput").click();
 
 function setStatus(t){ $("status").textContent = t||''; }
 function setValue(v){ $("value").textContent = v; }
