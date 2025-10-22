@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>insurance ai</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.19.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    :root{--bg:#0b1220;--panel:#0f1830;--text:#e9eeff;--line:#24355a;--accent:#7aa2ff}
+    *{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    body{margin:0;background:radial-gradient(1000px 500px at 50% -10%,#16214a 0%,#0b1220 60%,#0b1220 100%);color:var(--text);min-height:100dvh;display:grid;place-items:center}
+    .wrap{width:100%;max-width:680px;display:grid;gap:16px;justify-items:center;padding:20px}
+    .title{font-size:22px;font-weight:800;letter-spacing:.3px}
+    .panel{width:100%;background:linear-gradient(180deg,#0f1830,#0b142b);border:1px solid var(--line);border-radius:16px;padding:18px;display:grid;gap:12px;justify-items:center;box-shadow:0 20px 45px rgba(0,0,0,.35)}
+    .drop{width:100%;border:2px dashed #36508a;border-radius:14px;padding:28px;display:grid;place-items:center;background:#0b1430}
+    .drop.dragover{background:#0d1840}
+    input[type=file]{display:none}
+    .btn{background:var(--accent);border:none;padding:11px 16px;border-radius:12px;color:#0b1220;font-weight:800;cursor:pointer}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
+    .bigValue{font-size:36px;font-weight:900;letter-spacing:.5px}
+    .invis{position:absolute;left:-9999px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="title">insurance ai</div>
+    <div class="panel">
+      <div id="dropZone" class="drop">
+        <button id="trainBtn" class="btn">train.csv</button>
+        <input id="trainInput" type="file" accept=".csv" />
+        <button id="testBtn" class="btn">test.csv</button>
+        <input id="testInput" type="file" accept=".csv" />
+      </div>
+      <div id="value" class="bigValue">—</div>
+    </div>
+  </div>
+
+<script>
+// Minimal product: upload train.csv and test.csv, show a single value.
+// If test has multiple rows, show the average predicted charges. If one row, show its prediction.
+
+let trainRows = [], testRows = [];
+let columns = [], target = 'charges';
+let catCols = [], numCols = [];
+let enc = {}; let model = null;
+
+const el = (id)=>document.getElementById(id);
+
+// Centered UI: two hidden file inputs triggered by buttons; also drag&drop on the area
+const dz = el('dropZone');
+['dragenter','dragover'].forEach(evt=> dz.addEventListener(evt, e=>{e.preventDefault();e.stopPropagation();dz.classList.add('dragover');}));
+;['dragleave','drop'].forEach(evt=> dz.addEventListener(evt, e=>{e.preventDefault();e.stopPropagation();dz.classList.remove('dragover');}));
+
+dz.addEventListener('drop', (e)=>{
+  const files = [...e.dataTransfer.files];
+  handleFiles(files);
+});
+
+document.getElementById('trainBtn').onclick = ()=> el('trainInput').click();
+document.getElementById('testBtn').onclick  = ()=> el('testInput').click();
+
+el('trainInput').addEventListener('change', e=> handleFiles([...e.target.files]));
+el('testInput').addEventListener('change',  e=> handleFiles([...e.target.files]));
+
+function handleFiles(files){
+  const train = files.find(f=> /train\.csv$/i.test(f.name));
+  const test  = files.find(f=> /test\.csv$/i.test(f.name));
+  if(train) parseCSV(train, true);
+  if(test)  parseCSV(test, false);
+}
+
+function parseCSV(file, isTrain){
+  Papa.parse(file, {header:true, dynamicTyping:true, skipEmptyLines:true,
+    complete:(res)=>{
+      if(isTrain){ trainRows = res.data; columns = res.meta.fields||Object.keys(trainRows[0]||{}); guessSchema(); fitEncoders(); trainModel(); }
+      else { testRows = res.data; maybePredict(); }
+    }
+  });
+}
+
+function guessSchema(){
+  if(!columns.length) return;
+  const cols = columns.filter(c=> c!==target);
+  catCols = []; numCols = [];
+  for(const c of cols){
+    const vals = trainRows.map(r=> r[c]).filter(v=> v!==null && v!==undefined);
+    const numRatio = vals.filter(v=> typeof v==='number' && !Number.isNaN(v)).length / Math.max(vals.length,1);
+    if(numRatio>0.85 && new Set(vals).size>15) numCols.push(c); else catCols.push(c);
+  }
+}
+
+function fitEncoders(){
+  enc={};
+  for(const c of numCols){
+    const nums = trainRows.map(r=> Number(r[c])).filter(v=>!Number.isNaN(v));
+    const mean = nums.reduce((a,b)=>a+b,0)/Math.max(nums.length,1);
+    const std  = Math.sqrt(nums.reduce((a,b)=>a+(b-mean)*(b-mean),0)/Math.max(nums.length,1)) || 1;
+    const med  = nums.slice().sort((a,b)=>a-b)[Math.floor(nums.length/2)]||0;
+    enc[c] = {type:'num', mean, std, med};
+  }
+  for(const c of catCols){
+    const vals = trainRows.map(r=> r[c]);
+    const uniq = [...new Set(vals.map(v=> (v===undefined||v===null||v==='')? '∅': String(v)))];
+    const map = Object.fromEntries(uniq.map((k,i)=>[k,i]));
+    enc[c] = {type:'cat', map, size: uniq.length};
+  }
+}
+
+function rowToFeatures(r){
+  const out=[];
+  for(const c of numCols){
+    const info=enc[c]; const v=Number(r[c]); const x=Number.isNaN(v)? info.med: v; out.push((x-info.mean)/info.std);
+  }
+  for(const c of catCols){
+    const info=enc[c]; const size=info.size; const k=(r[c]===undefined||r[c]===null||r[c]==='')? '∅': String(r[c]);
+    const arr=new Array(size).fill(0); const idx=info.map[k]; if(idx!==undefined) arr[idx]=1; out.push(...arr);
+  }
+  return out;
+}
+
+async function trainModel(){
+  if(!trainRows.length) return;
+  const X = tf.tensor2d(trainRows.map(r=> rowToFeatures(r)));
+  const y = tf.tensor2d(trainRows.map(r=> [Number(r[target])]));
+  model = tf.sequential({layers:[
+    tf.layers.dense({units:128, activation:'relu', inputShape:[X.shape[1]]}),
+    tf.layers.dropout({rate:0.15}),
+    tf.layers.dense({units:64, activation:'relu'}),
+    tf.layers.dense({units:1})
+  ]});
+  model.compile({optimizer:tf.train.adam(0.001), loss:'meanSquaredError'});
+  await model.fit(X,y,{epochs:20, batchSize: Math.min(256, Math.max(32, Math.floor(X.shape[0]/20)||64)), shuffle:true});
+  maybePredict();
+}
+
+function maybePredict(){
+  if(!model || !testRows.length) return;
+  const X = tf.tensor2d(testRows.map(r=> rowToFeatures(r)));
+  const yhat = model.predict(X);
+  yhat.data().then(arr=>{
+    const n = arr.length;
+    const single = n===1 ? arr[0] : (arr.reduce((a,b)=>a+b,0)/n);
+    el('value').textContent = single.toFixed(2);
+  });
+}
+</script>
+</body>
+</html>
